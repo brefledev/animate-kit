@@ -3,6 +3,7 @@
 **Work in progress.** Forked from [Chase's animate](https://github.com/cth9191/animate), maintained by Brennan Flentge.
 
 - **Bundled:** [Husni Adil Makmur's audio/export improvements](https://github.com/husniadil/animate/commit/00bd08459c0a460bdc0a090e773238e59a18c203), [Trevor Baimon's Linux GPU support and fallback](https://github.com/Baiimn/animate/commit/a332a1ca607a664d9c653c3c9cbd2e58eb6cd9d5), [Edern Lalanne's optional world-map style](https://github.com/edernlalanne-dotcom/animate_EL-version/commit/4dfa15423cbf677b923e846f323eb34e0ee0efed), and [Luiz Gustavo's publishing studio](https://github.com/luizgustavof/animate/tree/3cd7792058216238f9b9bb9f29563dbe9ab937f7).
+  - Publishing studio: manage accounts, edit post text, and publish videos to YouTube, TikTok and X.
 - **Modified:** English studio interface and documentation; fixes to rendering, caption formats, metadata saving, upload recovery, and publishing state.
 - **Added:** X video publishing with OAuth, chunked uploads, weighted post text, metrics and deletion; regression checks for the renderer, GPU fallback and publishing studio.
 
