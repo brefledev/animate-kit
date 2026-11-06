@@ -1,5 +1,5 @@
 // Render a piece's storyboard (TIMELINE.board, drawn by kit/board.js) to a PNG, plus optional single panels at full size
-// usage: node tools/storyboard.mjs <piece dir | index.html> [out.png] [panel numbers...]   (out defaults to <piece>/storyboard.png)
+// usage: node tools/storyboard.mjs <piece dir | index.html> [out.png] [panel numbers...] [--format 1:1]   (out defaults to <piece>/storyboard.png)
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';

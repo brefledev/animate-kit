@@ -1,9 +1,9 @@
 {
-  "name": "animate",
+  "name": "animate-kit",
   "owner": {
-    "name": "cth9191"
+    "name": "Brennan Flentge"
   },
-  "description": "Procedural animation in any style for Claude Code.",
+  "description": "Animate Kit: a work-in-progress fork of cth9191/animate for procedural animation.",
   "plugins": [
     {
       "name": "animate",

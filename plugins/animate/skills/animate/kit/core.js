@@ -403,6 +403,15 @@ function screen() { ctx.setTransform(1, 0, 0, 1, 0, 0); }
 function toScreen(x, y) { const p = ctx.getTransform().transformPoint(new DOMPoint(x, y)); return [p.x, p.y]; }
 function fillAll(color) { ctx.save(); screen(); ctx.fillStyle = color; ctx.fillRect(0, 0, W, H); ctx.restore(); }
 
+// text drawn without one fillText per string (stroke lettering, glyph-by-glyph type) reports its box (local coordinates,
+// mapped through the current transform) so tools/textcheck.mjs checks it as one string; a piece's own lettering can call it
+// too. Outside the text check it does nothing.
+function reportText(str, x0, y0, x1, y1) {
+  const sink = window.__textSink; if (!sink || !String(str).trim()) return;
+  const m = ctx.getTransform();
+  sink(String(str), [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([x, y]) => [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f]), ctx.canvas, ctx.globalAlpha);
+}
+
 // monospace text with per-glyph hand jitter
 function monoText(str, x, y, size, color, o = {}) {
   ctx.save();
@@ -410,10 +419,13 @@ function monoText(str, x, y, size, color, o = {}) {
   const cw = ctx.measureText('M').width, R = RNG('txt', o.key ?? str, B), jit = o.jit ?? 0.9;
   const n = Math.min(o.count ?? str.length, str.length);
   ctx.globalAlpha = o.al ?? 1;
+  { const m = ctx.measureText(str.slice(0, n)); reportText(str.slice(0, n), x, y - m.actualBoundingBoxAscent, x + n * cw, y + m.actualBoundingBoxDescent); }
+  const sink = window.__textSink; if (sink) sink.mute = (sink.mute || 0) + 1;   // the glyphs below are that string, already reported
   for (let i = 0; i < n; i++) {
     const ch = str[i]; if (ch === ' ') continue;
     ctx.save(); ctx.translate(x + i * cw + R.n(jit), y + R.n(jit)); ctx.rotate(R.n(0.045)); ctx.fillText(ch, 0, 0); ctx.restore();
   }
+  if (sink) sink.mute--;
   ctx.restore();
   return cw;
 }
@@ -438,12 +450,14 @@ function handwrite(str, x, y, size, o = {}) {
     pen += g.w + 0.1;
   }
   const lens = strokes.map(pathLen), total = lens.reduce((a, b) => a + b, 0);
-  let budget = clamp(o.frac ?? 1) * total;
+  let budget = clamp(o.frac ?? 1) * total, x1 = x;
   for (let i = 0; i < strokes.length && budget > 0; i++) {
     const f = Math.min(1, budget / lens[i]); budget -= lens[i];
     if (o.glow) ink(strokes[i], { color: o.glow, w: (o.w ?? size * 0.06) * 3, amt: o.amt ?? 1.0, key: 'hw' + i + str, frac: f });
     ink(strokes[i], { color: o.c, w: o.w ?? size * 0.06, amt: o.amt ?? 1.0, key: 'hw' + i + str, frac: f });
+    for (const [px] of strokes[i]) x1 = Math.max(x1, px);
   }
+  if (x1 > x) reportText(str, x, y - size, x1, y + 0.05 * size);   // the part written so far
   return pen * size;
 }
 

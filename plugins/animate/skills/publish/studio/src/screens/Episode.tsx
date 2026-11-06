@@ -1,0 +1,573 @@
+// One episode, start to departure: its own frame and video on the left; on the right the words (written by Claude, edited
+// live against each platform's limits, saved by themselves) and the departure (where, when, the upload's progress).
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useParams } from 'react-router';
+import { AnimatePresence, m } from 'motion/react';
+import { useQueryClient } from '@tanstack/react-query';
+import { api, media } from '../api/client';
+import { TIKTOK_START, TikTokPost, tiktokBlock, useTikTokCreator, type TikTokChoices } from './TikTokPost';
+import { PhoneCaption } from '../ui/PhoneCaption';
+import { UploadBars } from '../ui/Uploads';
+import { useRefreshDrafts, useCancel, useJobFor, useUnpublish, useNextSlot, usePiece, usePublish, useSaveMeta, useStudio, useWriteWords } from '../api/queries';
+import type { Channel, Checks, Meta, PieceDetail, PlatformId } from '../api/types';
+import { channelCode, codeOf } from '../lib/board';
+import { useSettled } from '../lib/hooks';
+import { errorText, issueText, mb, secs, time, when, whenLong } from '../lib/words';
+import { Flap } from '../ui/Flap';
+import { Button, Field, Lamp, Poster, inputClass } from '../ui/controls';
+import { Icon } from '../ui/Icon';
+import { PlatformIcon } from '../ui/PlatformIcon';
+
+type Tab = 'text' | 'publish';
+
+export function Episode() {
+  const { slug = '' } = useParams();
+  const { mutate: checkDrafts } = useRefreshDrafts();
+  useEffect(() => { checkDrafts(); }, [checkDrafts, slug]);
+  const piece = usePiece(slug);
+  const studio = useStudio();
+  const [tab, setTab] = useState<Tab>('text');
+  const [switching, setSwitching] = useState(false);
+  const flushWords = useRef<(() => Promise<void>) | null>(null);
+  const changeTab = async (next: Tab) => {
+    if (switching) return;
+    setSwitching(true);
+    try {
+      if (next === 'publish') await flushWords.current?.();
+      setTab(next);
+    } catch { /* Words keeps the draft and displays the save error. */ }
+    finally { setSwitching(false); }
+  };
+  const channel = studio.data?.channels.find(c => c.id === piece.data?.channel) ?? null;
+
+  if (piece.error) return (
+    <div className="grid gap-5 py-10">
+      <Flap text="Unavailable" size="lg" tone="red" />
+      <p className="text-ink-2">{errorText((piece.error as Error).message)}</p>
+      <Link to="/"><Button icon="back">Back to publishing</Button></Link>
+    </div>
+  );
+  const d = piece.data;
+
+  return (
+    <article className="grid gap-8" aria-labelledby="ep-title">
+      <header className="grid gap-3">
+        <Link to="/" aria-keyshortcuts="Escape" title="Back to publishing (Esc)"
+          className="group flex w-fit items-center gap-2 rounded-md py-1 pr-2 text-[0.85rem] font-medium text-ink-3 transition-colors hover:text-ink">
+          <Icon name="back" size={15} className="transition-transform group-hover:-translate-x-0.5" />
+          Publishing
+          <kbd className="ml-1 rounded-[4px] border border-rule px-1.5 py-px text-[0.68rem] text-ink-3">Esc</kbd>
+        </Link>
+        <div className="flex basis-full flex-wrap items-center gap-5">
+          <Flap text={codeOf(slug)} size="md" />
+          <h1 id="ep-title" className="min-w-[12rem] flex-1 font-cond text-[2rem] font-semibold leading-none text-ink">
+            {d ? (d.title.split(' — ').at(-1) ?? d.title) : ' '}
+          </h1>
+          {channel ? <span className="flex basis-full items-center gap-3 font-cond text-[0.95rem] text-ink-3 sm:basis-auto"><Flap text={channelCode(channel)} size="xs" />{channel.name}</span> : null}
+        </div>
+      </header>
+
+      <div className="grid items-start gap-10 lg:grid-cols-[minmax(260px,340px)_1fr]">
+        <aside className="grid w-full max-w-[340px] gap-5 lg:sticky lg:top-8 lg:max-w-none">
+          <Player slug={slug} />
+          {d?.render ? (
+            <dl className="grid grid-cols-3 gap-[3px] text-center">
+              {[['Duration', secs(d.render.duration)], ['Format', `${d.render.width}×${d.render.height}`], ['File', mb(d.render.bytes)]].map(([k, v]) => (
+                <div key={k} className="flap-row grid gap-1 px-2 py-2"><dt className="label !text-[0.65rem]">{k}</dt><dd className="font-cond text-[1rem] font-semibold">{v}</dd></div>
+              ))}
+            </dl>
+          ) : null}
+          {d?.lines.length ? <Script lines={d.lines} /> : null}
+        </aside>
+
+        <section className="grid min-w-0 gap-6">
+          <div role="tablist" aria-label="Steps" className="flex border-b border-rule">
+            {([['text', 'Text'], ['publish', 'Publish']] as const).map(([id, label]) => (
+              <button key={id} role="tab" aria-selected={tab === id} aria-controls={`panel-${id}`} id={`tab-${id}`} disabled={switching} onClick={() => void changeTab(id)}
+                className={`relative px-5 pb-3 pt-1 caps text-[1rem] tracking-[0.16em] transition-colors ${tab === id ? 'text-ink' : 'text-ink-3 hover:text-ink-2'}`}>
+                {label}
+                {tab === id ? <m.span layoutId="ep-tab" className="absolute inset-x-2 -bottom-px h-[3px] bg-amber" transition={{ type: 'spring', stiffness: 520, damping: 42 }} /> : null}
+              </button>
+            ))}
+          </div>
+          {!d ? <div className="flap-row h-64 opacity-60" aria-busy="true" /> : (
+            <>
+              <div hidden={tab !== 'text'} id="panel-text" role="tabpanel" aria-labelledby="tab-text">
+                <fieldset disabled={switching}>
+                  <Words key={slug} piece={d} channel={channel} flushRef={flushWords} onDone={() => void changeTab('publish')} />
+                </fieldset>
+              </div>
+              {tab === 'publish' ? <div id="panel-publish" role="tabpanel" aria-labelledby="tab-publish">
+                <Departure piece={d} channel={channel} onEdit={() => void changeTab('text')} />
+              </div> : null}
+            </>
+          )}
+        </section>
+      </div>
+    </article>
+  );
+}
+
+// the frame until asked to play; the video element exists only while playing and lets go of its source when it leaves
+function Player({ slug }: { slug: string }) {
+  const [playing, setPlaying] = useState(false);
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const v = ref.current;
+    return () => { if (v) { v.pause(); v.removeAttribute('src'); v.load(); } };
+  }, [playing]);
+  return (
+    <div className="relative">
+      <Poster slug={slug} w={340} className="w-full" />
+      {playing ? (
+        <video ref={ref} src={media.video(slug)} autoPlay controls playsInline preload="metadata"
+          className="absolute inset-0 size-full bg-black object-contain" onEnded={() => setPlaying(false)} />
+      ) : (
+        <button onClick={() => setPlaying(true)} aria-label="Play episode"
+          className="absolute inset-0 grid place-items-center bg-black/0 transition-colors hover:bg-black/30 focus-visible:bg-black/30">
+          <span className="grid size-16 place-items-center border border-ink/70 bg-flap/80 text-ink"><Icon name="play" size={26} /></span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Script({ lines }: { lines: PieceDetail['lines'] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="grid gap-2">
+      <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="flex items-center justify-between label hover:text-ink-2">
+        Spoken script ({lines.length} lines) <Icon name={open ? 'x' : 'plus'} size={14} />
+      </button>
+      {open ? <ol className="grid max-h-[40vh] gap-2 overflow-auto pr-2 text-[0.92rem] leading-snug text-ink-2">{lines.map(l => <li key={l.id}>{l.text}</li>)}</ol> : null}
+    </div>
+  );
+}
+
+// ---------- TEXTO ----------
+const EMPTY: Required<Pick<Meta, 'youtube' | 'tiktok' | 'instagram' | 'x'>> = { youtube: { title: '', description: '', tags: [] }, tiktok: { caption: '' }, instagram: { caption: '' }, x: { text: '' } };
+
+function Words({ piece, channel, onDone, flushRef }: { piece: PieceDetail; channel: Channel | null; onDone: () => void; flushRef: { current: (() => Promise<void>) | null } }) {
+  const qc = useQueryClient();
+  const server = piece.meta;
+  const version = server?.writtenAt ?? '';
+  const [draft, setDraft] = useState<Meta>(() => ({ ...EMPTY, ...server }));
+  const [dirty, setDirty] = useState(false);
+  const draftRef = useRef(draft);
+  const revision = useRef(0);
+  const savedRevision = useRef(0);
+  const pendingSave = useRef<Promise<void> | null>(null);
+  // a new generation from Claude replaces the draft (only while nothing is typed that isn't saved)
+  const lastVersion = useRef(version);
+  useEffect(() => {
+    if (!dirty && version !== lastVersion.current) { lastVersion.current = version; draftRef.current = { ...EMPTY, ...server }; setDraft(draftRef.current); }
+  }, [version, server, dirty]);
+
+  const write = useWriteWords(piece.slug);
+  const job = useJobFor('words', piece.slug);
+  const cancel = useCancel();
+  const save = useSaveMeta(piece.slug);
+  const writing = job?.status === 'running' || write.isPending;
+
+  // live check against the platforms' own rules, after typing settles; the request is aborted if the draft moves on
+  const settled = useSettled(draft, 350);
+  const [checks, setChecks] = useState<Checks | null>(piece.checks);
+  useEffect(() => {
+    if (!settled.youtube) return;
+    const ac = new AbortController();
+    api.check(piece.slug, settled, {}, ac.signal).then(setChecks).catch(() => {});
+    return () => ac.abort();
+  }, [settled, piece.slug]);
+
+  // Serialize writes and track the revision each response saved. Tab navigation drains this queue.
+  const flush = (): Promise<void> => {
+    if (pendingSave.current) return pendingSave.current;
+    const run = async () => {
+      while (savedRevision.current < revision.current) {
+        const savingRevision = revision.current;
+        await save.mutateAsync(draftRef.current);
+        savedRevision.current = savingRevision;
+      }
+      setDirty(false);
+    };
+    pendingSave.current = run().finally(() => { pendingSave.current = null; });
+    return pendingSave.current;
+  };
+  flushRef.current = flush;
+  useEffect(() => {
+    if (!dirty) return;
+    const timer = window.setTimeout(() => { void flush().catch(() => {}); }, 900);
+    return () => window.clearTimeout(timer);
+    // The current ref supplies the latest draft; mutation status must not restart the timer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, dirty]);
+
+  const set = (fn: (d: Meta) => Meta) => {
+    draftRef.current = fn(draftRef.current);
+    revision.current++;
+    setDraft(draftRef.current);
+    setDirty(true);
+  };
+  const yt = {
+    title: typeof draft.youtube?.title === 'string' ? draft.youtube.title : '',
+    description: typeof draft.youtube?.description === 'string' ? draft.youtube.description : '',
+    tags: Array.isArray(draft.youtube?.tags) ? draft.youtube.tags : [],
+  };
+  const issues = Object.values(checks?.platforms ?? {}).flatMap(c => c?.issues ?? []);
+  const hashtags = useMemo(() => yt.description.match(/#[\p{L}\p{N}_]+/gu) ?? [], [yt.description]);
+  const candidates = draft.candidates?.youtube ?? [];
+  const reasons = draft.reasons?.youtube ?? [];
+
+  if (writing) return <WritingStrip log={job?.log ?? []} onCancel={() => job && cancel.mutate(job.id)} />;
+
+  const failed = job?.status === 'failed' ? job.error : write.error?.message;
+  if (!server && !dirty) return (
+    <div className="grid gap-6 border border-rule bg-flap-2 p-8">
+      <div className="grid gap-2">
+        <Flap text="Needs text" size="md" tone="dim" />
+        <p className="max-w-xl text-[1.05rem] leading-relaxed text-ink-2">
+          Claude reads the episode’s spoken script{channel ? ` and the profile for ${channel.name}` : ''} and writes five titles, descriptions and hashtags. Review and edit them before posting.
+        </p>
+      </div>
+      {failed ? <p className="border border-[#5a2422] bg-[#1d0f0f] px-4 py-3 text-red">{errorText(failed)}</p> : null}
+      <div className="flex flex-wrap gap-3">
+        <Button kind="primary" size="lg" icon="spark" onClick={() => write.mutate(undefined, { onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }) })}>Draft with Claude</Button>
+        <Button kind="quiet" size="lg" onClick={() => set(() => ({ ...EMPTY }))}>Write manually</Button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="grid gap-8">
+      {candidates.length ? (
+        <fieldset className="grid gap-3">
+          <legend className="label mb-3 flex w-full items-center justify-between">
+            <span>Suggested titles</span>
+            <Button kind="quiet" size="sm" icon="refresh" onClick={() => write.mutate()}>Generate again</Button>
+          </legend>
+          <div className="grid gap-[3px]">
+            {candidates.map((c, i) => {
+              const on = yt.title === c;
+              return (
+                <label key={i} className={`flap-row flex cursor-pointer items-start gap-4 px-4 py-3 outline-offset-2 has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-amber ${on ? 'ring-1 ring-amber' : 'hover:brightness-125'}`}>
+                  <input type="radio" name="title" className="sr-only" checked={on} onChange={() => set(d => ({ ...d, youtube: { ...(d.youtube ?? EMPTY.youtube), title: c } }))} />
+                  <Flap text={String(i + 1)} size="xs" tone={on ? 'amber' : 'dim'} />
+                  <span className="grid gap-1">
+                    <span className={`font-cond text-[1.15rem] font-semibold leading-tight ${on ? 'text-amber' : 'text-ink'}`}>{c}</span>
+                    {reasons[i] ? <span className="text-[0.88rem] leading-snug text-ink-3">{reasons[i]}</span> : null}
+                  </span>
+                  {i === draft.chosen ? <span className="ml-auto shrink-0 label !text-ink-2">Claude’s choice</span> : null}
+                </label>
+              );
+            })}
+          </div>
+          {draft.why ? <p className="text-[0.92rem] text-ink-3">{draft.why}</p> : null}
+        </fieldset>
+      ) : null}
+
+      <div className="grid gap-6">
+        <Field label="YouTube title" htmlFor="yt-title" hint={<Counter n={yt.title.length} soft={70} hard={100} />}>
+          <input id="yt-title" className={`${inputClass} font-cond text-[1.25rem] font-semibold`} value={yt.title} maxLength={140}
+            onChange={e => set(d => ({ ...d, youtube: { ...(d.youtube ?? EMPTY.youtube), title: e.target.value } }))} />
+        </Field>
+        <Field label="Description" htmlFor="yt-desc" hint={hashtags.length ? `${hashtags.length} hashtag${hashtags.length > 1 ? 's' : ''}` : 'no hashtags'}>
+          <textarea id="yt-desc" rows={6} className={`${inputClass} resize-y leading-relaxed`} value={yt.description}
+            onChange={e => set(d => ({ ...d, youtube: { ...(d.youtube ?? EMPTY.youtube), description: e.target.value } }))} />
+          {hashtags.length ? <div className="flex flex-wrap gap-1.5">{hashtags.map((h, i) => <span key={h + i} className={`border px-2 py-0.5 font-cond text-[0.9rem] ${i < 3 ? 'border-steel-3 text-ink' : 'border-rule text-ink-3'}`}>{h}</span>)}</div> : null}
+        </Field>
+        <Field label="Search keywords" htmlFor="yt-tags" hint="comma separated">
+          <input id="yt-tags" className={inputClass} value={yt.tags.join(', ')}
+            onChange={e => set(d => ({ ...d, youtube: { ...(d.youtube ?? EMPTY.youtube), tags: e.target.value.split(',').map(s => s.trimStart()).filter((s, i, a) => s || i === a.length - 1) } }))} />
+        </Field>
+        <div className="grid gap-6 md:grid-cols-2">
+          <Field label="TikTok caption" htmlFor="tt-cap" hint={<span className="text-ink-3">used when TikTok is connected</span>}>
+            <textarea id="tt-cap" rows={4} className={`${inputClass} resize-y`} value={draft.tiktok?.caption ?? ''}
+              onChange={e => set(d => ({ ...d, tiktok: { caption: e.target.value } }))} />
+          </Field>
+          <Field label="Instagram caption" htmlFor="ig-cap" hint={<span className="text-ink-3">Instagram publishing is planned</span>}>
+            <textarea id="ig-cap" rows={4} className={`${inputClass} resize-y`} value={draft.instagram?.caption ?? ''}
+              onChange={e => set(d => ({ ...d, instagram: { caption: e.target.value } }))} />
+          </Field>
+        </div>
+      </div>
+
+      {channel?.platforms.x ? <Field label="X post text" htmlFor="x-text" hint={`${checks?.platforms.x?.limits?.weightedLength ?? 0} / 280 weighted characters`}>
+        <textarea id="x-text" rows={4} className={`${inputClass} resize-y`} value={draft.x?.text ?? ''} onChange={e => set(d => ({ ...d, x: { text: e.target.value } }))} />
+        <p className="text-sm text-ink-3">URLs count as 23 characters; emoji and CJK characters use weighted counting. Empty text publishes the video alone. Captions burned into your video remain visible.</p>
+      </Field> : null}
+      <Findings issues={issues} />
+
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-rule pt-5">
+        <span className="flex items-center gap-2 font-cond text-[0.9rem] text-ink-3" aria-live="polite">
+          <Lamp tone={save.isPending || dirty ? 'amber' : save.isError ? 'red' : 'off'} blink={save.isPending} />
+          {save.isError ? 'Could not save' : dirty || save.isPending ? 'Saving…' : draft.editedAt || draft.writtenAt ? `Saved at ${time(draft.editedAt ?? draft.writtenAt!)}` : 'Saved'}
+        </span>
+        <Button kind="primary" icon="arrow" onClick={onDone}>Continue to publishing</Button>
+      </div>
+    </div>
+  );
+}
+
+function Counter({ n, soft, hard }: { n: number; soft: number; hard: number }) {
+  const tone = n > hard ? 'text-red' : n > soft ? 'text-amber' : 'text-ink-3';
+  return <span className={`tabular-nums ${tone}`} aria-label={`${n} characters out of ${hard}`}>{n} / {soft}</span>;
+}
+
+function Findings({ issues }: { issues: NonNullable<NonNullable<Checks['platforms']['youtube']>['issues']> }) {
+  if (!issues.length) return null;
+  return (
+    <ul className="grid gap-[3px]" aria-label="Validation findings">
+      {issues.map((i, k) => (
+        <li key={i.code + k} className="flap-row flex items-center gap-4 px-4 py-2.5">
+          <Flap text={i.level === 'error' ? 'Error' : 'Warning'} cells={5} size="xs" tone={i.level === 'error' ? 'red' : 'amber'} />
+          <span className="text-[0.95rem] text-ink-2">{issueText(i)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function WritingStrip({ log, onCancel }: { log: string[]; onCancel: () => void }) {
+  return (
+    <div className="grid gap-5 border border-amber/50 bg-flap-2 p-8" aria-live="polite">
+      <span className="flex items-center gap-4"><Flap text="Writing" size="md" tone="amber" /><Lamp tone="amber" blink /></span>
+      <p className="text-[1.05rem] text-ink-2">Claude is reading the episode and drafting titles.</p>
+      {log.length ? <ul className="grid gap-1 font-cond text-[0.95rem] text-ink-3">{log.slice(-4).map((l, i) => <li key={i}>{l}</li>)}</ul> : null}
+      <div><Button kind="quiet" icon="x" onClick={onCancel}>Cancel</Button></div>
+    </div>
+  );
+}
+
+// ---------- PARTIDA ----------
+type When = 'next' | 'choose' | 'now';
+
+// one thing already sent, with the way to take it back. Deleting asks first, in words, because the platform can't undo it.
+function PostedItem({ slug, postKey, post: p, label, caption }: { slug: string; postKey: string; post: PieceDetail['posts'][string]; label: string; caption: string }) {
+  const [asking, setAsking] = useState(false);
+  const unpublish = useUnpublish(slug);
+  const job = useJobFor('unpublish', `${slug}:${postKey}`);
+  const busy = unpublish.isPending || job?.status === 'running';
+  const failed = unpublish.error?.message ?? (job?.status === 'failed' ? job.error : null);
+  const lastLog = job?.status === 'running' ? job.events.filter(e => e.type === 'unpublish:log').at(-1)?.message : null;
+  const what = p.platform === 'tiktok' ? 'This clears the local upload record. Delete the draft or post in the TikTok app first.'
+    : p.status === 'scheduled' ? `The video scheduled for ${p.publishAt ? whenLong(p.publishAt) : 'later'} will be deleted from the channel.`
+    : p.status === 'uploading' ? 'This clears the interrupted upload record and makes the episode ready again.'
+    : 'This deletes the video and its views and comments from the channel.';
+  return (
+    <li className="flap-row grid gap-3 rounded-md px-4 py-3">
+      <div className="flex flex-wrap items-center gap-4">
+        <PlatformIcon id={p.platform} size={17} className="text-ink" />
+        <Flap text={p.status === 'scheduled' ? 'Scheduled' : p.status === 'posted' ? 'Posted' : p.status === 'public' ? 'Live' : p.status === 'draft' ? 'Draft' : p.status === 'uploading' ? 'Paused' : 'Private'} cells={8} size="xs" tone={p.status === 'scheduled' ? 'amber' : 'ink'} />
+        <span className="text-[0.95rem] text-ink-2">{p.status === 'draft' ? `in the TikTok inbox since ${when(p.postedAt!)}: finish posting in the app` : p.publishAt ? `publishes ${when(p.publishAt)}` : p.postedAt ? `sent ${when(p.postedAt)}` : 'upload interrupted: review it before retrying'}</span>
+        <span className="ml-auto flex items-center gap-4">
+          {p.url ? <a href={p.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-[0.85rem] font-medium text-amber hover:underline">Open <Icon name="external" size={14} /></a> : null}
+          {!asking && !busy ? (
+            <button onClick={() => setAsking(true)} className="flex items-center gap-1.5 text-[0.85rem] font-medium text-ink-3 transition-colors hover:text-red">
+              <Icon name="trash" size={15} /> Delete
+            </button>
+          ) : null}
+        </span>
+      </div>
+      {p.status === 'draft' ? <div className="grid gap-3"><div><CopyCaption text={caption} /></div><PhoneCaption caption={caption} /></div> : null}
+      {p.warning ? <span className="text-[0.9rem] text-ink-3">{errorText(p.warning)}</span> : null}
+      <AnimatePresence initial={false}>
+        {asking || busy ? (
+          <m.div key="ask" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }} className="overflow-hidden">
+            <div role="alertdialog" aria-label={`Delete from ${label}`} className="grid gap-3 rounded-md border border-red/40 bg-red/[0.06] p-4">
+              <p className="text-[0.95rem] text-ink"><strong className="font-semibold">{p.platform === 'tiktok' ? 'Clear this upload record?' : `Delete from ${label}?`}</strong> {what}{p.platform === 'tiktok' ? '' : ' Deletion is permanent.'}</p>
+              {lastLog ? <p className="text-[0.88rem] text-ink-2">{errorText(String(lastLog))}</p> : null}
+              {failed ? <p className="text-[0.9rem] text-red">{errorText(failed)}</p> : null}
+              <div className="flex flex-wrap gap-2">
+                <Button kind="danger" size="sm" icon="trash" busy={busy} disabled={busy} onClick={() => unpublish.mutate(postKey)}>{p.platform === 'tiktok' ? 'Clear upload record' : 'Delete permanently'}</Button>
+                {!busy ? <Button kind="quiet" size="sm" onClick={() => { setAsking(false); unpublish.reset(); }}>Keep</Button> : null}
+              </div>
+            </div>
+          </m.div>
+        ) : null}
+      </AnimatePresence>
+    </li>
+  );
+}
+
+function Departure({ piece, channel, onEdit }: { piece: PieceDetail; channel: Channel | null; onEdit: () => void }) {
+  const slot = useNextSlot(channel?.id ?? null);
+  const publish = usePublish(piece.slug);
+  const job = useJobFor('publish', piece.slug);
+  const cancel = useCancel();
+  const platforms = Object.entries(channel?.platforms ?? {}) as Array<[PlatformId, NonNullable<Channel['platforms'][PlatformId]>]>;
+  const usable = platforms.filter(([id, p]) => p.state === 'ready' && p.connected && !piece.posts[`${channel!.id}/${id}`]?.id).map(([id]) => id);
+  const [picked, setPicked] = useState<PlatformId[]>(usable);
+  const usableKey = usable.join(',');
+  // the channel can arrive after the episode: start with every platform it can post to, once
+  useEffect(() => { setPicked(p => (p.length ? p.filter(x => usable.includes(x)) : usable)); }, [usableKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [whenMode, setWhen] = useState<When>('now');
+  const [chosen, setChosen] = useState('');
+  const [testPrivate, setTestPrivate] = useState(false);
+  const [tt, setTt] = useState<TikTokChoices>(TIKTOK_START);
+  const xOn = picked.includes('x');
+  const ttOn = picked.includes('tiktok');
+  useEffect(() => { if (xOn) { setWhen('now'); setTestPrivate(false); } }, [xOn]);
+  const ttInfo = useTikTokCreator(channel?.id ?? '', ttOn && tt.mode === 'direct' && !!channel);
+  const ttBlock = ttOn ? tiktokBlock(tt, ttInfo.data, piece.render?.duration ?? null) : null;
+
+  const at = testPrivate || xOn ? null : whenMode === 'next' ? (slot.data?.[picked[0] ?? 'youtube'] ?? null) : whenMode === 'choose' && chosen ? new Date(chosen).toISOString() : null;
+  const errors = Object.entries(piece.checks?.platforms ?? {}).flatMap(([id, c]) => picked.includes(id as PlatformId) ? (c?.issues?.filter(i => i.level === 'error') ?? c?.errors?.map(text => ({ level: 'error' as const, code: 'validation', text })) ?? []) : []);
+  const posted = Object.entries(piece.posts);
+  const running = job?.status === 'running' || publish.isPending;
+
+  if (!piece.meta) return (
+    <div className="grid gap-4 border border-rule bg-flap-2 p-8">
+      <Flap text="Needs text" size="md" tone="dim" />
+      <p className="text-ink-2">Add the publishing text before sending the episode.</p>
+      <div><Button kind="primary" icon="back" onClick={onEdit}>Write text</Button></div>
+    </div>
+  );
+
+  if (running) {
+    return <Progress job={job} slug={piece.slug} platforms={picked} onCancel={() => job && cancel.mutate(job.id)} caption={piece.meta?.tiktok?.caption ?? ''} />;
+  }
+
+  const summary = picked.length
+    ? `${picked.map(p => channel?.platforms[p]?.label).join(' and ')}${channel ? `, on channel ${channel.platforms[picked[0]!]?.connected?.title ?? channel.name}` : ''}, ${xOn ? 'using account visibility for X' : testPrivate ? 'as private (test)' : 'public'}, ${at ? whenLong(at) : 'now'}.`
+    : 'Choose at least one destination.';
+  const tiktokNote = !ttOn ? '' : tt.mode === 'direct'
+    ? ` TikTok posts immediately to the profile${tt.privacy === 'SELF_ONLY' ? ', visible only to you' : ''}.`
+    : (picked.length > 1 ? ' TikTok receives a draft now; finish publishing in the app.' : ' This sends a draft to your TikTok inbox; finish publishing in the app.');
+
+  return (
+    <div className="grid gap-8">
+      {posted.length ? (
+        <ul className="grid gap-[3px]" aria-label="Already sent">
+          {posted.map(([key, p]) => <PostedItem key={key} slug={piece.slug} postKey={key} post={p} label={channel?.platforms[p.platform]?.label ?? p.platform} caption={piece.meta?.tiktok?.caption ?? ''} />)}
+        </ul>
+      ) : null}
+
+      <fieldset className="grid gap-3">
+        <legend className="label mb-3">Destination</legend>
+        <div className="grid gap-[3px]">
+          {platforms.map(([id, p]) => {
+            const done = piece.posts[`${channel!.id}/${id}`]?.id;
+            const can = p.state === 'ready' && !!p.connected && !done;
+            const on = picked.includes(id);
+            return (
+              <label key={id} className={`flap-row flex items-center gap-4 px-4 py-3 ${can ? 'cursor-pointer hover:brightness-125' : done ? '' : 'opacity-60'} ${on && can ? 'ring-1 ring-amber' : ''} has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-amber`}>
+                <input type="checkbox" className="sr-only" disabled={!can} checked={(on && can) || !!done} onChange={() => setPicked(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])} />
+                {/* already sent: ticked in green and locked, so the row reads as done, not as an empty choice */}
+                <span className={`grid size-5 place-items-center border ${done ? 'border-green bg-green text-amber-ink' : on && can ? 'border-amber bg-amber text-amber-ink' : 'border-steel-3'}`}>{done || (on && can) ? <Icon name="check" size={14} /> : null}</span>
+                <PlatformIcon id={id} size={17} className={can || done ? 'text-ink' : 'text-ink-3/50'} />
+                <span className="font-cond text-[1.05rem] font-semibold">{p.label}</span>
+                <span className={`ml-auto font-cond text-[0.92rem] ${done ? 'text-green' : 'text-ink-3'}`}>
+                  {p.state !== 'ready' ? 'planned' : done ? 'already sent' : p.connected ? p.connected.title : <Link to="/channels" className="text-amber hover:underline">connect in Channels</Link>}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <fieldset className="grid gap-3">
+        <legend className="label mb-3">When</legend>
+        <div className="grid gap-[3px] md:grid-cols-3">
+          {([['next', 'Next slot', slot.data && picked[0] && slot.data[picked[0]] ? when(slot.data[picked[0]]!) : '…'], ['choose', 'Choose', chosen ? when(chosen) : 'date and time'], ['now', 'Now', 'as soon as uploaded']] as const).map(([id, label, sub]) => (
+            <label key={id} className={`flap-row grid cursor-pointer gap-1 px-4 py-3 hover:brightness-125 ${whenMode === id ? 'ring-1 ring-amber' : ''} has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-amber`}>
+              <input type="radio" name="when" className="sr-only" disabled={(xOn || testPrivate) && id !== 'now'} checked={whenMode === id} onChange={() => setWhen(id)} />
+              <span className={`caps text-[0.95rem] ${whenMode === id ? 'text-amber' : 'text-ink'}`}>{label}</span>
+              <span className="font-cond text-[0.95rem] text-ink-3">{sub}</span>
+            </label>
+          ))}
+        </div>
+        {whenMode === 'choose' ? (
+          <input type="datetime-local" aria-label="Publication date and time" className={`${inputClass} max-w-xs font-cond text-[1.05rem]`} value={chosen}
+            min={new Date(Date.now() + 20 * 60e3 - new Date().getTimezoneOffset() * 60e3).toISOString().slice(0, 16)} onChange={e => setChosen(e.target.value)} />
+        ) : null}
+        <label className="mt-2 flex cursor-pointer items-center gap-3 font-cond text-[0.95rem] text-ink-2">
+          <input type="checkbox" disabled={xOn} checked={testPrivate} onChange={e => { setTestPrivate(e.target.checked); if (e.target.checked) setWhen('now'); }} className="size-4 accent-[var(--color-amber)]" />
+          Send as private for a test
+        </label>
+      </fieldset>
+
+      {xOn ? <div className="grid gap-2 rounded border border-rule p-4"><strong>X posts immediately using your account’s visibility.</strong><p className="whitespace-pre-wrap">{piece.meta?.x?.text || 'Video-only post'}</p><p className="text-sm text-ink-3">X scheduling and per-post private testing are unavailable. Review the connected account and text before choosing Publish now.</p></div> : null}
+      {ttOn && channel ? <TikTokPost channel={channel.id} value={tt} onChange={setTt} seconds={piece.render?.duration ?? null} /> : null}
+
+      {errors.length ? <Findings issues={errors} /> : null}
+      {job && job.status !== 'running' && (job.error || job.events.some(e => e.type === 'publish:failed')) ? <p role="alert" className="text-red">{errorText(job.error || String(job.events.filter(e => e.type === 'publish:failed').at(-1)?.error ?? ''))}</p> : null}
+      {publish.error ? <p className="border border-[#5a2422] bg-[#1d0f0f] px-4 py-3 text-red">{errorText(publish.error.message)}</p> : null}
+
+      <div className="grid gap-4 border-t border-rule pt-6">
+        <p className="text-[1.05rem] text-ink-2"><span className="text-ink">Destination: </span>{summary}{tiktokNote}</p>
+        <div>
+          <Button kind="primary" size="lg" icon="arrow" disabled={!picked.length || errors.length > 0 || (xOn && (whenMode !== 'now' || testPrivate)) || !!ttBlock || (whenMode === 'choose' && !chosen) || (whenMode === 'next' && !at)}
+            title={ttBlock ?? undefined}
+            onClick={() => publish.mutate({ platforms: picked, at: whenMode === 'now' ? null : at, privacy: testPrivate ? 'private' : undefined, tiktok: ttOn ? tt : undefined })}>
+            {whenMode === 'now' ? 'Publish now' : at ? `Schedule for ${when(at)}` : 'Schedule'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type DoneEntry = { platform?: string; url?: string; status?: string; publishAt?: string; warning?: string };
+
+// a TikTok draft carries no caption: the creator pastes it in the app, so it's one click away here
+function CopyCaption({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { if (!copied) return; const t = window.setTimeout(() => setCopied(false), 1800); return () => window.clearTimeout(t); }, [copied]);
+  if (!text) return null;
+  return <Button size="sm" kind="frame" icon={copied ? 'check' : 'link'} onClick={() => { void navigator.clipboard?.writeText(text).then(() => setCopied(true)); }}>{copied ? 'Caption copied' : 'Copy TikTok caption'}</Button>;
+}
+
+function DoneLine({ e, caption }: { e: DoneEntry; caption: string }) {
+  const draft = e.status === 'draft';
+  return (
+    <li className="grid gap-2 rounded-md bg-flap px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <PlatformIcon id={e.platform ?? ''} size={17} className="text-ink" />
+        <span className={`text-[0.95rem] font-semibold ${e.status === 'scheduled' ? 'text-amber' : 'text-ink'}`}>{draft ? 'TikTok draft' : e.status === 'scheduled' ? 'Scheduled' : e.status === 'public' ? 'Live' : 'Sent'}</span>
+        <span className="text-[0.92rem] text-ink-2">{draft ? 'Open TikTok, select the inbox notification, paste the caption, and post.' : e.publishAt ? `publishes automatically ${whenLong(e.publishAt)}` : 'published on the channel'}</span>
+        {e.url ? <a href={e.url} target="_blank" rel="noreferrer" className="ml-auto flex items-center gap-1.5 text-[0.85rem] font-medium text-amber hover:underline">Open <Icon name="external" size={14} /></a> : null}
+      </div>
+      {draft ? <div className="grid gap-3"><div><CopyCaption text={caption} /></div><PhoneCaption caption={caption} /></div> : null}
+      {e.warning ? <p className="text-[0.9rem] text-amber">{errorText(e.warning)}</p> : null}
+    </li>
+  );
+}
+
+function Progress({ job, slug, platforms, onCancel, caption }: { job: ReturnType<typeof useJobFor>; slug: string; platforms: string[]; onCancel: () => void; caption: string }) {
+  const uploads = job?.uploads ?? {};
+  const mine = [...new Set([...Object.values(uploads).filter(u => u.slug === slug).map(u => u.platform), ...platforms])];
+  // the whole departure: each platform counts the same; processing counts as sent
+  const pct = mine.length ? Math.floor(mine.reduce((s, p) => { const u = uploads[`${slug}:${p}`]; return s + (!u ? 0 : u.phase === 'preparing' ? 0 : u.phase === 'sending' ? u.sent / Math.max(1, u.total) : 1); }, 0) / mine.length * 100) : 0;
+  const nowUp = mine.map(p => uploads[`${slug}:${p}`]).find(u => u && (u.phase === 'preparing' || u.phase === 'sending' || u.phase === 'processing'));
+  const dones = (job?.events ?? []).filter(e => e.type === 'publish:done').map(e => ({ platform: String(e.platform ?? ''), ...(e.entry as DoneEntry) }));
+  const fails = (job?.events ?? []).filter(e => e.type === 'publish:failed');
+  const jobFail = job?.status === 'failed' ? job.error : null;
+  const lines = job?.events.filter(e => e.type === 'publish:log').slice(-3).map(e => String(e.message)) ?? [];
+  const running = job?.status === 'running';
+
+  if (!running && (dones.length || fails.length || jobFail)) return (
+    <div className={`grid gap-5 rounded-lg border p-8 ${dones.length ? 'border-rule bg-flap-2' : 'border-[#5a2422] bg-[#140b0b]'}`} aria-live="polite">
+      <Flap text={dones.length ? (fails.length ? 'Partly sent' : 'Ready') : 'Failed'} size="lg" tone={dones.length ? 'ink' : 'red'} intro />
+      {dones.length ? <ul className="grid gap-2">{dones.map((e, i) => <DoneLine key={i} e={e} caption={caption} />)}</ul> : null}
+      {fails.map((f, i) => <p key={i} className="flex items-center gap-2 text-[0.95rem] text-red"><PlatformIcon id={String(f.platform ?? '')} size={15} /> {errorText(String(f.error ?? ''))}</p>)}
+      {jobFail && !fails.length ? <p className="text-[1.05rem] text-ink-2">{errorText(jobFail)}</p> : null}
+    </div>
+  );
+  return (
+    <div className="grid gap-6 border border-amber/50 bg-flap-2 p-8" aria-live="polite">
+      <div className="flex items-center gap-5">
+        <Flap text={`${String(pct).padStart(3, ' ')}%`} size="xl" tone="amber" label={`${pct} percent uploaded`} />
+        <div className="grid gap-1">
+          <span className="flex items-center gap-2 caps text-amber"><Lamp tone="amber" blink /> Uploading</span>
+          <span className="font-cond text-[1rem] text-ink-3">{nowUp ? `now: ${nowUp.platform === 'tiktok' ? 'TikTok' : nowUp.platform === 'youtube' ? 'YouTube' : nowUp.platform}` : 'Preparing upload…'} · {mine.length} destination{mine.length === 1 ? '' : 's'}</span>
+        </div>
+      </div>
+      <UploadBars slug={slug} platforms={mine} uploads={uploads} />
+      {dones.length ? <ul className="grid gap-2">{dones.map((e, i) => <DoneLine key={i} e={e} caption={caption} />)}</ul> : null}
+      {lines.length ? <ul className="grid gap-1 font-cond text-[0.92rem] text-ink-3">{lines.map((l, i) => <li key={i}>{l}</li>)}</ul> : null}
+      <p className="text-[0.95rem] text-ink-3">Upload progress is saved. Check any uncertain post outcome before retrying.</p>
+      <div><Button kind="quiet" icon="stop" onClick={onCancel}>Stop upload</Button></div>
+    </div>
+  );
+}

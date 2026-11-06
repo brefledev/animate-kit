@@ -1,24 +1,33 @@
 #!/usr/bin/env node
 // Hash renderFrame output for chosen frames — to prove a kit or style change left a piece pixel-identical.
-//   usage: node tools/framehash.mjs a/index.html [b/index.html] f0 f1 f2 ...
+//   usage: node tools/framehash.mjs a/index.html [b/index.html] f0 f1 f2 ... [--gpu]
 // With two files it compares them frame by frame (exit 1 on any difference).
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { launchGpu } from './gpu.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = (() => { try { return require('playwright'); } catch { return require(path.join(execSync('npm root -g').toString().trim(), 'playwright')); } })();
 const args = process.argv.slice(2);
 const files = args.filter((a) => /\.html?$/i.test(a)), frames = args.filter((a) => /^\d+$/.test(a)).map(Number);
-if (!files.length || !frames.length) { console.error('usage: node tools/framehash.mjs a.html [b.html] f0 f1 ...'); process.exit(2); }
-const browser = await chromium.launch();
-async function hashes(file) {
+if (!files.length || !frames.length) { console.error('usage: node tools/framehash.mjs a.html [b.html] f0 f1 ... [--gpu]'); process.exit(2); }
+let browser = await chromium.launch();
+async function open(file) {
   const page = await browser.newPage();
   page.on('pageerror', (e) => console.error('pageerror', file, e.message));
   await page.goto(pathToFileURL(path.resolve(file)).href + '?export=1');
   await page.waitForFunction(() => window.TIMELINE && window.renderFrame);
   await page.evaluate(() => document.fonts.ready);
+  return page;
+}
+// WebGL pieces (TIMELINE.gpu or --gpu): every file renders on the GPU, so hashes stay comparable
+let gpu = args.includes('--gpu');
+for (const f of files) if (!gpu) { const p = await open(f); gpu = await p.evaluate(() => !!window.TIMELINE.gpu); await p.close(); }
+if (gpu) { await browser.close(); browser = await launchGpu(chromium); }
+async function hashes(file) {
+  const page = await open(file);
   const out = [];
   for (const f of frames) {
     const data = await page.evaluate((fr) => {

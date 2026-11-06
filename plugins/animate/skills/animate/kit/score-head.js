@@ -54,6 +54,62 @@ function encodeWav(left, right, sr) {
   for (let i = 0; i < n; i++) { v.setInt16(o, Math.round(clamp(left[i], -1, 1) * 32767), true); v.setInt16(o + 2, Math.round(clamp(right[i], -1, 1) * 32767), true); o += 4; }
   return new Uint8Array(buf);
 }
+// Same score, same bytes (opt-in: export.mjs --exact-audio adds ?exact-audio). An offline render adds up the connections into
+// one input in an order that changes from run to run (Chromium follows memory addresses), and float addition is not
+// associative, so a busy bus can differ in the last bit between renders. With exact audio, connections in an OfflineAudioContext
+// are recorded in the order the score makes them and wired when rendering starts: an input with one or two sources is connected
+// as usual (two values add the same either way round); a busier input gets a balanced tree of unity-gain nodes that adds its
+// sources two at a time, always in the same order. The tree's nodes stay active for the whole render, which is the cost.
+if (QS.has('exact-audio')) (() => {
+  const connect = AudioNode.prototype.connect, disconnect = AudioNode.prototype.disconnect, start = OfflineAudioContext.prototype.startRendering;
+  const pending = new WeakMap();   // context -> Map(destination -> Map(input -> [[source, output], ...]))
+  AudioNode.prototype.connect = function (dest, output = 0, input = 0) {
+    const ac = this.context, P = pending.get(ac);
+    if (!(ac instanceof OfflineAudioContext) || P === null || !(dest instanceof AudioNode || dest instanceof AudioParam)) return connect.apply(this, arguments);
+    const isParam = dest instanceof AudioParam, key = isParam ? 0 : input;
+    // let the browser validate it now (context, indices) and throw as it would, then hold it until rendering starts
+    if (isParam) { connect.call(this, dest, output); disconnect.call(this, dest, output); } else { connect.call(this, dest, output, input); disconnect.call(this, dest, output, input); }
+    let byDest = P; if (!byDest) pending.set(ac, (byDest = new Map()));
+    let byInput = byDest.get(dest); if (!byInput) byDest.set(dest, (byInput = new Map()));
+    let list = byInput.get(key); if (!list) byInput.set(key, (list = []));
+    if (!list.some(([n, o]) => n === this && o === output)) list.push([this, output]);   // a repeated connection connects once
+    return isParam ? undefined : dest;
+  };
+  // Honor edits to the graph made before rendering. Temporarily restore this source's real connections so the browser
+  // validates every disconnect overload (including missing edges), then update the deferred graph and detach it again.
+  AudioNode.prototype.disconnect = function (...args) {
+    const P = pending.get(this.context);
+    if (!(this.context instanceof OfflineAudioContext) || !P) return disconnect.apply(this, args);
+    const edges = [];
+    for (const [dest, byInput] of P) for (const [input, list] of byInput) for (const [node, output] of list) {
+      if (node !== this) continue;
+      edges.push({ dest, input, output });
+      if (dest instanceof AudioParam) connect.call(this, dest, output); else connect.call(this, dest, output, input);
+    }
+    try {
+      disconnect.apply(this, args);
+      for (const { dest, input, output } of edges) {
+        const match = args.length === 0 || (typeof args[0] === 'number' ? output === args[0]
+          : dest === args[0] && (args.length < 2 || output === args[1]) && (args.length < 3 || input === args[2]));
+        if (match) P.get(dest).set(input, P.get(dest).get(input).filter(([node, out]) => node !== this || out !== output));
+      }
+    } finally { disconnect.call(this); }
+  };
+  OfflineAudioContext.prototype.startRendering = function () {
+    for (const [dest, byInput] of pending.get(this) || []) for (const [input, list] of byInput) {
+      let level = list;
+      while (level.length > 2) {
+        const next = [];
+        for (let i = 0; i + 1 < level.length; i += 2) { const g = this.createGain(); connect.call(level[i][0], g, level[i][1]); connect.call(level[i + 1][0], g, level[i + 1][1]); next.push([g, 0]); }
+        if (level.length % 2) next.push(level[level.length - 1]);
+        level = next;
+      }
+      for (const [n, o] of level) if (dest instanceof AudioParam) connect.call(n, dest, o); else connect.call(n, dest, o, input);
+    }
+    pending.set(this, null);   // wired: later connections (after a suspend) go straight through
+    return start.apply(this, arguments);
+  };
+})();
 
 
 const MIDI = (m) => 440 * 2 ** ((m - 69) / 12);

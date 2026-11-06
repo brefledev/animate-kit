@@ -1,0 +1,19 @@
+{
+  "name": "animate-publishing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:ui": "npm run build --prefix studio && node --test tests/*.ui.mjs"
+  },
+  "dependencies": {
+    "twitter-text": "3.1.0"
+  },
+  "devDependencies": {
+    "playwright": "1.64.0"
+  }
+}

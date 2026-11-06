@@ -1,4 +1,12 @@
-# Animate — procedural animation in any style, for Claude Code
+# Animate Kit — procedural animation in any style
+
+**Work in progress.** Forked from [Chase's animate](https://github.com/cth9191/animate), maintained by Brennan Flentge.
+
+- **Bundled:** [Husni Adil Makmur's audio/export improvements](https://github.com/husniadil/animate/commit/00bd08459c0a460bdc0a090e773238e59a18c203), [Trevor Baimon's Linux GPU support and fallback](https://github.com/Baiimn/animate/commit/a332a1ca607a664d9c653c3c9cbd2e58eb6cd9d5), [Edern Lalanne's optional world-map style](https://github.com/edernlalanne-dotcom/animate_EL-version/commit/4dfa15423cbf677b923e846f323eb34e0ee0efed), and [Luiz Gustavo's publishing studio](https://github.com/luizgustavof/animate/tree/3cd7792058216238f9b9bb9f29563dbe9ab937f7).
+- **Modified:** English studio interface and documentation; fixes to rendering, caption formats, metadata saving, upload recovery, and publishing state.
+- **Added:** X video publishing with OAuth, chunked uploads, weighted post text, metrics and deletion; regression checks for the renderer, GPU fallback and publishing studio.
+
+The original [MIT license](LICENSE) and upstream history are preserved. See [CREDITS.md](CREDITS.md) for full contributor attribution and source revisions.
 
 A Claude Code skill that makes short animated videos entirely in code: one `<canvas>`, drawn and scored procedurally, deterministic frame by frame, rendered to MP4 with a headless browser and ffmpeg. Explainers, histories, little stories — in one of the built-in styles, or in a new look matched from your own references.
 
@@ -32,6 +40,7 @@ A style is a plug-in: the story grammar, timing, sound, renderer and tools stay 
 | math | a manim-style math explainer: black stage, axes and graphs, colour-coded variables, smooth easing |
 | pixel | low-resolution eras: drawn at the true resolution, upscaled nearest-neighbour, a bitmap font |
 | isometric | precise isometric line art: constant hairlines, white faces hiding what's behind, rounded slabs, one dark accent; light or dark ground |
+| world-map (optional) | slate ocean, amber territories, labels, pins, flags and a globe mascot; select `"style": "world-map"` |
 
 **Your own look:** give the skill references (a video, stills, a web page) and it follows a procedure — measure the palette, line weight, texture, motion and cut rhythm; draw 1–2 matched frames next to your references (`tools/compare.mjs`); ask for your thumbs up; save it as `styles/<name>/` in your project so every later piece can use it. Reference media stays on your machine.
 
@@ -52,6 +61,12 @@ Each style folder has a `STYLE.md` (its rules, palette, motion habits and a fram
 
 **Coming:** a WebGL motion-design style (ray-marched 3D, sub-frame motion blur, bloom) — the export and review tools already run WebGL pieces on the GPU and warn when only software rendering is available.
 
+## Fork additions
+
+Audio exports include integrated loudness normalization and a check of the decoded AAC true peak. Use `--exact-audio` for repeatable score samples within the same browser/runtime. Linux WebGL tools try ANGLE/GL, then retry Chromium's default renderer if that launch fails. Each contribution and its source revision appears in [CREDITS.md](CREDITS.md).
+
+The optional [publishing studio](plugins/animate/skills/publish/SKILL.md) requires Node 22+ and manages channels, video metadata and publishing to YouTube, TikTok and X. Its interface and documentation are in English. Platform connections and posting are explicit actions; running a local preview starts the studio without posting a video. See the publishing skill for setup, API access requirements and platform-specific limits.
+
 ## Install
 
 Requirements: [Claude Code](https://code.claude.com), Node 18+, [Playwright](https://playwright.dev) with Chromium, and ffmpeg on your PATH. Fonts are local system fonts with fallbacks for Windows, macOS and Linux. For voice-overs: Python with `faster-whisper` (word timing) and, optionally, the ElevenLabs connector in Claude (Settings → Connectors) for the voice.
@@ -60,11 +75,11 @@ Requirements: [Claude Code](https://code.claude.com), Node 18+, [Playwright](htt
 npm i -g playwright && npx playwright install chromium
 ```
 
-As a plugin:
+Install the public WIP from GitHub:
 
 ```
-/plugin marketplace add cth9191/animate
-/plugin install animate@animate
+/plugin marketplace add brefledev/animate-kit
+/plugin install animate@animate-kit
 ```
 
 Or copy the skill folder by hand: `plugins/animate/skills/animate/` → `~/.claude/skills/animate/`.

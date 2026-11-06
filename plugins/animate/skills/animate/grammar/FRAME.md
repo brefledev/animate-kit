@@ -16,7 +16,7 @@ It exists because a storyboard drawn as correct-but-plain labelled diagrams came
 6. **Text lives in the world or is set like the style's own type.** On a note, a sign, a tag, a screen, a face of an object, or as typeset math. One short caption per beat at most, ≥ 50px at 1080 wide.
 7. **Scale varies across the board.** Wides, mid shots and at least one extreme close-up. A board where every panel uses the same framing is a slideshow.
 8. **A recurring thread across frames:** a callback prop, a critter, a colour, a shape that comes back changed.
-9. **Phone-safe:** on 9:16, what matters sits inside x 60–940, y 250–1500 (the platform UI covers the rest); anything that matters is ≥ ~100px.
+9. **Phone-safe:** on 9:16, what matters sits inside x 60–940, y 250–1500 (the platform UI covers the rest); anything that matters is ≥ ~100px. In other formats: inside `TIMELINE.safe`, and ≥ ~100 × `UNIT` (styles/README.md, "Checklists in other formats").
 
 ## A hero device for long time spans
 

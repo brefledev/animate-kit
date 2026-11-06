@@ -1,4 +1,5 @@
-// test tile: render chosen frames into a grid (each 270x480) with the phone-UI safe zones drawn in red; print timings +
+// test tile: render chosen frames into a grid (cells in the piece's aspect, 270 px wide for vertical pieces and 360 for the rest,
+// as review's contact sheets) with the platform-UI safe zones (TIMELINE.safe) drawn in red; print timings +
 // determinism (every frame rendered twice, the second pass in reverse order; any difference is listed)
 // usage: node tools/tile.mjs <piece dir> out.png f0 f1 f2 ... [--format 1:1]   (frame numbers at TIMELINE.fps)
 //        (the older form PIECE=<piece dir> node tools/tile.mjs out.png f0 ... still works)
@@ -25,19 +26,26 @@ await p.goto(URL);
 await p.waitForFunction(() => window.TIMELINE && window.renderFrame, null, { timeout: 30000 });
 { const fo = await p.evaluate(() => window.FONTS_OK); if (fo !== undefined) console.log('fonts ok:', fo); }
 const res = await p.evaluate(async (frames) => {
-  const cols = Math.min(6, frames.length), rows = Math.ceil(frames.length / cols), s = 0.25;
-  const g = document.createElement('canvas'); g.width = cols * 270; g.height = rows * 480; const x = g.getContext('2d');
-  const src = document.getElementById('c'); const ms = [], first = [];
+  const src = document.getElementById('c'), T = window.TIMELINE, W = src.width, H = src.height, vertical = H > W;
+  const cw = vertical ? 270 : 360, ch = Math.round((cw * H) / W), s = cw / W;
+  const safe = T.safe || (vertical ? { top: 240, bottom: 420, right: 140 } : null);   // review's fallback for vertical pieces
+  const cols = Math.min(6, frames.length), rows = Math.ceil(frames.length / cols);
+  const g = document.createElement('canvas'); g.width = cols * cw; g.height = rows * ch; const x = g.getContext('2d');
+  const ms = [], first = [];
   for (let i = 0; i < frames.length; i++) {
-    const t0 = performance.now(); window.renderFrame(frames[i] / window.TIMELINE.fps); ms.push(performance.now() - t0);
-    const cx = (i % cols) * 270, cy = Math.floor(i / cols) * 480;
-    first.push(src.toDataURL()); x.drawImage(src, cx, cy, 270, 480);
-    x.fillStyle = 'rgba(255,0,0,0.18)'; x.fillRect(cx, cy + 1540 * s, 270, 380 * s); x.fillRect(cx + 950 * s, cy, 130 * s, 480);
+    const t0 = performance.now(); window.renderFrame(frames[i] / T.fps); ms.push(performance.now() - t0);
+    const cx = (i % cols) * cw, cy = Math.floor(i / cols) * ch;
+    first.push(src.toDataURL()); x.drawImage(src, cx, cy, cw, ch);
+    if (safe) {
+      x.fillStyle = 'rgba(255,0,0,0.18)';
+      x.fillRect(cx, cy, cw, safe.top * s); x.fillRect(cx, cy + ch - safe.bottom * s, cw, safe.bottom * s);
+      x.fillRect(cx + cw - safe.right * s, cy + safe.top * s, safe.right * s, ch - (safe.top + safe.bottom) * s);
+    }
     x.fillStyle = '#000'; x.fillRect(cx, cy, 44, 16); x.fillStyle = '#fff'; x.font = '12px monospace'; x.fillText('f' + frames[i], cx + 3, cy + 12);
   }
   // determinism: every frame again, in reverse order (so each follows a different frame), compare pixels
   const bad = [];
-  for (let i = frames.length - 1; i >= 0; i--) { window.renderFrame(frames[i] / window.TIMELINE.fps); if (src.toDataURL() !== first[i]) bad.push(frames[i]); }
+  for (let i = frames.length - 1; i >= 0; i--) { window.renderFrame(frames[i] / T.fps); if (src.toDataURL() !== first[i]) bad.push(frames[i]); }
   return { png: g.toDataURL('image/png').split(',')[1], ms, det: bad.length ? `false (frames ${bad.join(', ')} differ on a second render)` : true };
 }, frames);
 fs.writeFileSync(out, Buffer.from(res.png, 'base64'));

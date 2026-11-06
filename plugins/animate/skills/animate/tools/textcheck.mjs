@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Text check: every string the piece draws (fillText / strokeText), traced to screen space on sampled frames.
-// Flags text that is cut off by the frame edge, text that overlaps other text, and text under the phone UI.
+// Text check: every string the piece draws (fillText / strokeText, and lettering drawn as strokes or glyph by glyph, which
+// reports itself through kit/core.js reportText), traced to screen space on sampled frames.
+// Flags text that is cut off by the frame edge, text that overlaps other text, and text under the platform UI (TIMELINE.safe).
 // A model reviewing contact sheets by eye misses these (a cropped label reads as "fine" at thumbnail size).
-//   usage: node tools/textcheck.mjs <piece dir> [--every 6]       (also run by review.mjs)
+//   usage: node tools/textcheck.mjs <piece dir> [--every 6] [--format 1:1]       (also run by review.mjs)
 // Deliberate crowding (a storm of chat bubbles flying past the edges) goes in piece.json:
 //   "review": { "textIgnore": [[t0, t1, "why"]] }  -> issues inside those seconds print as OK (allowed), not FAIL.
 // Frames inside morph bridges are skipped (the world is scaled through a window there on purpose).
@@ -20,7 +21,7 @@ export async function textCheck(page, o = {}) {
       const orig = P[name];
       P[name] = function (str, x, y, maxW) {
         const s = String(str);
-        if (s.trim() && this.canvas.width === W && this.canvas.height === H && this.globalAlpha > 0.05) {
+        if (s.trim() && this.canvas.width === W && this.canvas.height === H && this.globalAlpha > 0.05 && !window.__textSink?.mute) {
           const m = this.measureText(s), w = maxW != null ? Math.min(m.width, maxW) : m.width;
           const al = this.textAlign, x0 = al === 'center' ? x - w / 2 : al === 'right' || al === 'end' ? x - w : x;
           const asc = m.actualBoundingBoxAscent || 0, desc = m.actualBoundingBoxDescent || 0;
@@ -33,6 +34,13 @@ export async function textCheck(page, o = {}) {
       return () => { P[name] = orig; };
     };
     const undo = [wrap('fillText'), wrap('strokeText')];
+    // whole strings reported by lettering that fillText never sees (kit/core.js reportText)
+    window.__textSink = (s, q, canvas, alpha) => {
+      if (canvas.width !== W || canvas.height !== H || alpha <= 0.05) return;
+      const xs = q.map((p) => p[0]), ys = q.map((p) => p[1]);
+      rec.push({ s, q, x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) });
+    };
+    undo.push(() => { delete window.__textSink; });
     const area = (P) => { let s = 0; for (let i = 0; i < P.length; i++) { const [x1, y1] = P[i], [x2, y2] = P[(i + 1) % P.length]; s += x1 * y2 - x2 * y1; } return Math.abs(s) / 2; };
     const clip = (P, Q) => {   // Sutherland-Hodgman: convex polygon P clipped by convex polygon Q
       const sgn = Math.sign((Q[1][0] - Q[0][0]) * (Q[2][1] - Q[0][1]) - (Q[1][1] - Q[0][1]) * (Q[2][0] - Q[0][0])) || 1;
@@ -105,7 +113,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   page.on('pageerror', (e) => console.error('PAGE ERROR:', e.message));
   await page.goto(pathToFileURL(path.resolve(file)).href + '?export=1' + (format ? `&format=${encodeURIComponent(format)}` : ''));
   await page.waitForFunction(() => window.TIMELINE && window.renderFrame);
-  const safe = await page.evaluate(() => (window.TIMELINE.height > window.TIMELINE.width ? window.TIMELINE.safe || { top: 240, bottom: 420, right: 140 } : null));
+  const safe = await page.evaluate(() => window.TIMELINE.safe || (window.TIMELINE.height > window.TIMELINE.width ? { top: 240, bottom: 420, right: 140 } : null));
   const pj = path.join(args[0].endsWith('.html') ? path.dirname(args[0]) : args[0], 'piece.json');
   const ignore = fs.existsSync(pj) ? JSON.parse(fs.readFileSync(pj, 'utf8')).review?.textIgnore || [] : [];
   const ok = printTextCheck(await textCheck(page, { every, safe }), ignore);
