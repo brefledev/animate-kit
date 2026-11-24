@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "pretest": "npm run build --prefix plugins/animate/skills/publish/studio",
     "test": "node --test tests/gpu.test.mjs plugins/animate/skills/publish/tests/*.test.mjs",
     "test:render": "node tests/rendering.mjs && node tests/world-map.mjs",
     "test:studio": "npm run build --prefix plugins/animate/skills/publish/studio && node --test plugins/animate/skills/publish/tests/studio.ui.mjs"
