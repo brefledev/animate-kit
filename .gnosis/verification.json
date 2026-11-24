@@ -1,0 +1,45 @@
+{
+  "requiredPaths": [
+    "tests/gpu.test.mjs",
+    "tests/rendering.mjs",
+    "tests/world-map.mjs",
+    "plugins/animate/skills/publish/tests/corrections.test.mjs",
+    "plugins/animate/skills/publish/tests/studio.test.mjs",
+    "plugins/animate/skills/publish/tests/x.test.mjs",
+    "plugins/animate/skills/publish/tests/studio.ui.mjs",
+    "plugins/animate/skills/publish/studio/package-lock.json"
+  ],
+  "commands": [
+    [
+      "npm",
+      "test"
+    ],
+    [
+      "npm",
+      "run",
+      "test:studio"
+    ],
+    [
+      "node",
+      "tests/rendering.mjs"
+    ],
+    [
+      "node",
+      "tests/world-map.mjs"
+    ]
+  ],
+  "hosted": {
+    "workflow": "verification.yml",
+    "jobs": [
+      "verify (windows-latest)",
+      "verify (ubuntu-latest)"
+    ],
+    "steps": [
+      "Run behavioral tests",
+      "Build and test studio",
+      "Run renderer and map checks"
+    ]
+  },
+  "scope": "GPU control flow, publishing behavioral and browser tests, production studio build, real Chromium/ffmpeg renderer, deterministic audio and world-map pixels. Live provider acceptance and Linux hardware GPU remain separate.",
+  "cache": false
+}
